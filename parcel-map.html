@@ -98,6 +98,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
     <div class="s-sec">
       <h3>Overlays</h3>
+      <div class="layer-row"><input type="checkbox" id="ov-contours"><label for="ov-contours">Contour lines</label><div class="dot" style="background:#c8a84b"></div></div>
       <div class="layer-row"><input type="checkbox" id="ov-flood" checked><label for="ov-flood">FEMA Flood Zones</label><div class="dot" style="background:#4a7fc1"></div></div>
       <div class="layer-row"><input type="checkbox" id="ov-wetlands"><label for="ov-wetlands">NWI Wetlands</label><div class="dot" style="background:#3a9a5a"></div></div>
       <div class="layer-row"><input type="checkbox" id="ov-soils"><label for="ov-soils">NRCS Soils</label><div class="dot" style="background:#c87a2a"></div></div>
@@ -194,6 +195,10 @@ document.querySelectorAll('input[name="base"]').forEach(r => {
 });
 
 // ── Overlay toggles ───────────────────────────────────────────────────────────
+document.getElementById('ov-contours').addEventListener('change', function () {
+  this.checked ? contours.addTo(map) : map.removeLayer(contours);
+  setStatus(this.checked ? 'Contours on' : 'Contours off');
+});
 document.getElementById('ov-flood').addEventListener('change', function () {
   this.checked ? flood.addTo(map) : map.removeLayer(flood);
   setStatus(this.checked ? 'FEMA flood zones on' : 'FEMA flood zones off');
@@ -255,6 +260,18 @@ async function searchAddress() {
 }
 
 document.getElementById('addr').addEventListener('keydown', e => { if (e.key === 'Enter') searchAddress(); });
+
+// ── USGS Contours overlay — dedicated contour lines only, high contrast ───────
+const contours = L.esri.dynamicMapLayer({
+  url: 'https://index.nationalmap.gov/arcgis/rest/services/ContourUS/MapServer',
+  layers: [1, 2],
+  opacity: 1.0,
+  format: 'png32',
+  transparent: true,
+  bboxSR: 3857,
+  imageSR: 3857,
+  f: 'image'
+});
 
 // ── NC OneMap Parcels — free statewide NC parcel boundaries ───────────────────
 const parcels = L.esri.dynamicMapLayer({
