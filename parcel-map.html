@@ -416,7 +416,7 @@ async function autoInit() {
 setTimeout(autoInit, 500);
 
 // ── NC OneMap Parcels
-// highlightLayer declared in identifyParcelAt function above
+let highlightLayer = null;
 
 map.on('click', async function(e) {
   setStatus('Identifying parcel...');
