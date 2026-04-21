@@ -88,9 +88,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div style="border-top: 1px solid #222; margin: 8px 0;"></div>
       <div style="font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: #555; margin-bottom: 8px;">Click map to identify parcel</div>
       <div class="prop-row"><span class="prop-label">Owner</span><span class="prop-val" id="p-owner">—</span></div>
-      <div class="prop-row"><span class="prop-label">Parcel ID</span><span class="prop-val" id="p-pid">—</span></div>
+      <div class="prop-row"><span class="prop-label">Parcel #</span><span class="prop-val" id="p-pid">—</span></div>
       <div class="prop-row"><span class="prop-label">GIS Acres</span><span class="prop-val" id="p-gisacres">—</span></div>
       <div class="prop-row"><span class="prop-label">Site Addr</span><span class="prop-val" id="p-siteaddr">—</span></div>
+      <div class="prop-row"><span class="prop-label">County</span><span class="prop-val" id="p-county-parcel">—</span></div>
+      <div class="prop-row"><span class="prop-label">Use</span><span class="prop-val" id="p-use">—</span></div>
+      <div class="prop-row"><span class="prop-label">Land Value</span><span class="prop-val" id="p-landval">—</span></div>
+      <div class="prop-row"><span class="prop-label">Last Sale</span><span class="prop-val" id="p-saldate">—</span></div>
     </div>
 
     <div class="s-sec">
@@ -351,16 +355,25 @@ map.on('click', async function(e) {
         }).addTo(map);
       }
 
-      // Try various field name formats NC OneMap might return
-      const owner = attrs['Owner'] || attrs['OWNER'] || attrs['owner'] || attrs['OwnersName'] || '—';
-      const acres = attrs['Calc Acres'] || attrs['CalcAcres'] || attrs['CALC_ACRES'] || attrs['gis_acres'] || attrs['GisAcres'] || '—';
-      const pid = attrs['Parcel ID'] || attrs['ParcelID'] || attrs['PARCEL_ID'] || attrs['PIN'] || attrs['pin_num'] || '—';
-      const address = attrs['Site Address'] || attrs['SiteAddress'] || attrs['SITE_ADDRESS'] || attrs['siteadr'] || '—';
+      // Exact NC OneMap field names from schema
+      const owner = attrs['ownname'] || '—';
+      const acres = attrs['gisacres'];
+      const pid = attrs['parno'] || attrs['nparno'] || '—';
+      const address = attrs['siteadd'] || '—';
+      const county = attrs['cntyname'] || '—';
+      const landval = attrs['landval'];
+      const parval = attrs['parval'];
+      const useDesc = attrs['parusedesc'] || '—';
+      const saleDate = attrs['saledatetx'] || '—';
 
       document.getElementById('p-owner').textContent = owner;
       document.getElementById('p-pid').textContent = pid;
-      document.getElementById('p-gisacres').textContent = typeof acres === 'number' ? acres.toFixed(2) : acres;
+      document.getElementById('p-gisacres').textContent = acres != null ? parseFloat(acres).toFixed(2) : '—';
       document.getElementById('p-siteaddr').textContent = address;
+      document.getElementById('p-county-parcel').textContent = county;
+      document.getElementById('p-use').textContent = useDesc;
+      document.getElementById('p-landval').textContent = landval != null ? '$' + parseInt(landval).toLocaleString() : '—';
+      document.getElementById('p-saldate').textContent = saleDate;
       setStatus('Parcel identified — click another to change');
     } else {
       setStatus('No parcel found at click location — try clicking inside a parcel boundary');
