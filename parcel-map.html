@@ -107,7 +107,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div class="s-sec">
       <h3>Parcel Lines</h3>
       <div class="layer-row"><input type="checkbox" id="ov-parcels" checked><label for="ov-parcels">NC OneMap Parcels (free)</label><div class="dot" style="background:#FFD700"></div></div>
-      <p class="note">Statewide NC parcel boundaries — all 100 counties. Zoom in to 14+ to see lines.</p>
+      <p class="note">Statewide NC parcel boundaries — all 100 counties. Must be zoomed to level 13+ to see polygon lines (pink dots at lower zoom are centroids).</p>
     </div>
 
     <div class="s-sec">
@@ -259,7 +259,7 @@ document.getElementById('addr').addEventListener('keydown', e => { if (e.key ===
 // ── NC OneMap Parcels — free statewide NC parcel boundaries ───────────────────
 const parcels = L.esri.dynamicMapLayer({
   url: 'https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer',
-  layers: [0],
+  layers: [1],
   opacity: 0.9,
   format: 'png32',
   transparent: true,
