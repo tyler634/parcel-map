@@ -154,11 +154,15 @@ const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
 sat.addTo(map);
 const bases = { sat, imgcont: imgTopo, topo, osm };
 
-// ── FEMA Flood — using L.esri.dynamicMapLayer (handles ArcGIS dynamic services) ──
+// ── FEMA Flood — dynamic map layer with explicit web mercator reprojection ────
 const flood = L.esri.dynamicMapLayer({
   url: 'https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer',
   layers: [28],
   opacity: 0.6,
+  format: 'png32',
+  transparent: true,
+  bboxSR: 3857,
+  imageSR: 3857,
   f: 'image'
 });
 flood.addTo(map);
