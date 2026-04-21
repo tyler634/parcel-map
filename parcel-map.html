@@ -400,14 +400,18 @@ async function autoInit() {
     setTimeout(() => identifyParcelAt(lat, lng), 800);
     setStatus('Auto-loading parcel from URL...');
   }
-  // If parno in URL — query NC OneMap feature service to get centroid, then identify
   else if (pParno) {
     setStatus('Looking up parcel ID ' + pParno + '...');
     try {
-      const countyFilter = pCounty ? `+AND+cntyname='${encodeURIComponent(pCounty)}'` : '';
+      // Try parno, altparno, and nparno — county stores ID in different fields
+      const countyClause = pCounty
+        ? `+AND+UPPER(cntyname)='${encodeURIComponent(pCounty.toUpperCase())}'`
+        : '';
+      const whereClause = `(parno='${pParno}'+OR+altparno='${pParno}'+OR+nparno='${pParno}')${countyClause}`;
+
       const queryUrl = `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/0/query?` +
-        `where=parno='${encodeURIComponent(pParno)}'${countyFilter}` +
-        `&outFields=parno,ownname,gisacres,siteadd,cntyname,landval,parusedesc,saledatetx` +
+        `where=${whereClause}` +
+        `&outFields=parno,altparno,nparno,ownname,gisacres,siteadd,cntyname,landval,parusedesc,saledatetx` +
         `&returnGeometry=true&outSR=4326&f=json`;
 
       const res = await fetch(queryUrl);
@@ -424,7 +428,31 @@ async function autoInit() {
         setTimeout(() => identifyParcelAt(lat, lng), 800);
         setStatus('Found parcel ' + pParno + ' — loading...');
       } else {
-        setStatus('Parcel ID ' + pParno + ' not found in NC OneMap — try adding &county=CountyName');
+        // If no result with county filter, try without it
+        if (pCounty) {
+          setStatus('Trying without county filter...');
+          const fallbackUrl = `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/0/query?` +
+            `where=parno='${pParno}'+OR+altparno='${pParno}'+OR+nparno='${pParno}'` +
+            `&outFields=parno,ownname,gisacres,siteadd,cntyname,landval,parusedesc,saledatetx` +
+            `&returnGeometry=true&outSR=4326&f=json`;
+          const res2 = await fetch(fallbackUrl);
+          const data2 = await res2.json();
+          if (data2.features && data2.features.length > 0) {
+            const feat = data2.features[0];
+            const lat = feat.geometry.y;
+            const lng = feat.geometry.x;
+            map.setView([lat, lng], 16);
+            setMarker(lat, lng, 'Parcel ' + pParno);
+            document.getElementById('p-coords').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5);
+            document.getElementById('link-google').href = `https://maps.google.com/?q=${lat},${lng}`;
+            setTimeout(() => identifyParcelAt(lat, lng), 800);
+            setStatus('Found parcel ' + pParno + ' — loading...');
+          } else {
+            setStatus('Parcel ID ' + pParno + ' not found. The county may use a different ID format — try using lat/lng instead.');
+          }
+        } else {
+          setStatus('Parcel ID ' + pParno + ' not found. Try adding &county=CountyName or use lat/lng.');
+        }
       }
     } catch(e) {
       setStatus('Parcel lookup error: ' + e.message);
