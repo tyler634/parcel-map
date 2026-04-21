@@ -397,9 +397,38 @@ async function autoInit() {
     setMarker(lat, lng, pAddr || (lat.toFixed(5) + ', ' + lng.toFixed(5)));
     document.getElementById('p-coords').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5);
     document.getElementById('link-google').href = `https://maps.google.com/?q=${lat},${lng}`;
-    // Wait for map to settle then identify
     setTimeout(() => identifyParcelAt(lat, lng), 800);
     setStatus('Auto-loading parcel from URL...');
+  }
+  // If parno in URL — query NC OneMap feature service to get centroid, then identify
+  else if (pParno) {
+    setStatus('Looking up parcel ID ' + pParno + '...');
+    try {
+      const countyFilter = pCounty ? `+AND+cntyname='${encodeURIComponent(pCounty)}'` : '';
+      const queryUrl = `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/0/query?` +
+        `where=parno='${encodeURIComponent(pParno)}'${countyFilter}` +
+        `&outFields=parno,ownname,gisacres,siteadd,cntyname,landval,parusedesc,saledatetx` +
+        `&returnGeometry=true&outSR=4326&f=json`;
+
+      const res = await fetch(queryUrl);
+      const data = await res.json();
+
+      if (data.features && data.features.length > 0) {
+        const feat = data.features[0];
+        const lat = feat.geometry.y;
+        const lng = feat.geometry.x;
+        map.setView([lat, lng], 16);
+        setMarker(lat, lng, 'Parcel ' + pParno);
+        document.getElementById('p-coords').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5);
+        document.getElementById('link-google').href = `https://maps.google.com/?q=${lat},${lng}`;
+        setTimeout(() => identifyParcelAt(lat, lng), 800);
+        setStatus('Found parcel ' + pParno + ' — loading...');
+      } else {
+        setStatus('Parcel ID ' + pParno + ' not found in NC OneMap — try adding &county=CountyName');
+      }
+    } catch(e) {
+      setStatus('Parcel lookup error: ' + e.message);
+    }
   }
   // If address in URL but no lat/lng — geocode then identify
   else if (pAddr) {
