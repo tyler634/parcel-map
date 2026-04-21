@@ -54,7 +54,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .btn-sm:hover { background: #2e2e2e; }
 
 .note { font-size: 10px; color: #444; line-height: 1.5; margin-top: 5px; }
-#map { flex: 1; }
+#map { flex: 1; cursor: crosshair; }
 .map-wrap { flex: 1; display: flex; position: relative; }
 .statusbar { background: #0e0e0e; border-top: 1px solid #1e1e1e; padding: 3px 14px; font-size: 11px; color: #444; flex-shrink: 0; }
 #status-txt { color: #3a8f6f; }
@@ -85,6 +85,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div class="prop-row"><span class="prop-label">MLS #</span><span class="prop-val" id="p-mls">1216816</span></div>
       <div class="prop-row"><span class="prop-label">County</span><span class="prop-val" id="p-county">Rockingham, NC</span></div>
       <div class="prop-row"><span class="prop-label">Coords</span><span class="prop-val" id="p-coords">—</span></div>
+      <div style="border-top: 1px solid #222; margin: 8px 0;"></div>
+      <div style="font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: #555; margin-bottom: 8px;">Click map to identify parcel</div>
+      <div class="prop-row"><span class="prop-label">Owner</span><span class="prop-val" id="p-owner">—</span></div>
+      <div class="prop-row"><span class="prop-label">Parcel ID</span><span class="prop-val" id="p-pid">—</span></div>
+      <div class="prop-row"><span class="prop-label">GIS Acres</span><span class="prop-val" id="p-gisacres">—</span></div>
+      <div class="prop-row"><span class="prop-label">Site Addr</span><span class="prop-val" id="p-siteaddr">—</span></div>
     </div>
 
     <div class="s-sec">
@@ -261,16 +267,65 @@ async function searchAddress() {
 
 document.getElementById('addr').addEventListener('keydown', e => { if (e.key === 'Enter') searchAddress(); });
 
-// ── USGS Contours overlay — dedicated contour lines only, high contrast ───────
+// ── USGS Contours — correct endpoint ─────────────────────────────────────────
 const contours = L.esri.dynamicMapLayer({
-  url: 'https://index.nationalmap.gov/arcgis/rest/services/ContourUS/MapServer',
-  layers: [1, 2],
+  url: 'https://carto.nationalmap.gov/arcgis/rest/services/contours/MapServer',
+  layers: [5],
   opacity: 1.0,
   format: 'png32',
   transparent: true,
   bboxSR: 3857,
   imageSR: 3857,
   f: 'image'
+});
+
+// ── Click to identify and highlight parcel ────────────────────────────────────
+let highlightLayer = null;
+
+map.on('click', async function(e) {
+  const { lat, lng } = e.latlng;
+  try {
+    const bounds = map.getBounds();
+    const size = map.getSize();
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    const bbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
+    const x = Math.round((lng - sw.lng) / (ne.lng - sw.lng) * size.x);
+    const y = Math.round((ne.lat - lat) / (ne.lat - sw.lat) * size.y);
+
+    const url = `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/identify?` +
+      `f=json&tolerance=3&returnGeometry=true&imageDisplay=${size.x},${size.y},96` +
+      `&mapExtent=${bbox}&sr=4326&layers=all:1&geometry=${lng},${lat}&geometryType=esriGeometryPoint`;
+
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (data.results && data.results.length > 0) {
+      const result = data.results[0];
+      const attrs = result.attributes;
+
+      if (highlightLayer) map.removeLayer(highlightLayer);
+      highlightLayer = L.geoJSON(result.geometry ? {
+        type: 'Feature',
+        geometry: result.geometry
+      } : null, {
+        style: { color: '#ff2222', weight: 3, fillColor: '#ff2222', fillOpacity: 0.15 }
+      }).addTo(map);
+
+      const owner = attrs['Owner'] || attrs['OWNER'] || attrs['owner'] || '—';
+      const acres = attrs['Calc Acres'] || attrs['CALC_ACRES'] || attrs['gis_acres'] || attrs['GISACRES'] || '—';
+      const pid = attrs['Parcel ID'] || attrs['PARCEL_ID'] || attrs['PIN'] || attrs['pin'] || '—';
+      const address = attrs['Site Address'] || attrs['SITE_ADDRESS'] || attrs['siteadr'] || '—';
+
+      document.getElementById('p-owner').textContent = owner;
+      document.getElementById('p-pid').textContent = pid;
+      document.getElementById('p-gisacres').textContent = acres;
+      document.getElementById('p-siteaddr').textContent = address;
+      setStatus('Parcel selected — click another to change');
+    }
+  } catch(e) {
+    setStatus('Click identify error: ' + e.message);
+  }
 });
 
 // ── NC OneMap Parcels — free statewide NC parcel boundaries ───────────────────
