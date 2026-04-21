@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LD Land · Parcel Analyzer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/esri-leaflet@3.0.12/dist/esri-leaflet.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #111; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+.topbar { background: #1a1a1a; border-bottom: 1px solid #333; padding: 8px 14px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; flex-wrap: wrap; }
+.topbar h1 { font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; letter-spacing: 0.03em; }
+.search-group { display: flex; gap: 6px; flex: 1; min-width: 280px; }
+.search-group input { flex: 1; padding: 6px 10px; border-radius: 5px; border: 1px solid #444; background: #2a2a2a; color: #fff; font-size: 13px; outline: none; }
+.search-group input:focus { border-color: #3a8f6f; }
+.search-group input::placeholder { color: #666; }
+.btn { padding: 6px 14px; border-radius: 5px; border: none; font-size: 13px; font-weight: 500; cursor: pointer; }
+.btn-primary { background: #3a8f6f; color: #fff; }
+.btn-primary:hover { background: #2d7059; }
+.btn-primary:disabled { background: #444; color: #888; cursor: default; }
+.key-group { display: flex; align-items: center; gap: 6px; }
+.key-group label { font-size: 11px; color: #888; white-space: nowrap; }
+.key-group input { width: 200px; padding: 6px 10px; border-radius: 5px; border: 1px solid #444; background: #2a2a2a; color: #fff; font-size: 12px; outline: none; }
+
+.main { display: flex; flex: 1; overflow: hidden; }
+.sidebar { width: 220px; background: #1a1a1a; border-right: 1px solid #252525; overflow-y: auto; flex-shrink: 0; }
+.s-sec { padding: 12px 14px; border-bottom: 1px solid #222; }
+.s-sec h3 { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: #555; margin-bottom: 9px; }
+
+.prop-row { display: flex; justify-content: space-between; gap: 4px; margin-bottom: 4px; }
+.prop-label { font-size: 11px; color: #666; flex-shrink: 0; }
+.prop-val { font-size: 11px; color: #ccc; text-align: right; word-break: break-all; }
+
+.layer-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; cursor: pointer; }
+.layer-row input { cursor: pointer; accent-color: #3a8f6f; }
+.layer-row label { font-size: 12px; color: #bbb; cursor: pointer; flex: 1; line-height: 1.3; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+.flag { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 3px; font-weight: 500; margin: 2px 2px 2px 0; }
+.flag-danger { background: #3d1515; color: #f87171; }
+.flag-warn { background: #3d2e10; color: #fbbf24; }
+.flag-ok { background: #0f2d1a; color: #4ade80; }
+
+.links a { display: block; font-size: 12px; color: #3a8f6f; text-decoration: none; margin-bottom: 6px; }
+.links a:hover { color: #4db88a; }
+
+.regrid-box { background: #1e1e1e; border: 1px solid #2a2a2a; border-radius: 5px; padding: 10px; }
+.regrid-box p { font-size: 11px; color: #777; line-height: 1.5; margin-bottom: 7px; }
+.regrid-box input { width: 100%; padding: 5px 8px; border-radius: 4px; border: 1px solid #333; background: #141414; color: #ccc; font-size: 11px; margin-bottom: 6px; outline: none; }
+.btn-sm { padding: 4px 10px; background: #252525; border: 1px solid #3a3a3a; color: #aaa; border-radius: 4px; font-size: 11px; cursor: pointer; }
+.btn-sm:hover { background: #2e2e2e; }
+
+.note { font-size: 10px; color: #444; line-height: 1.5; margin-top: 5px; }
+#map { flex: 1; }
+.map-wrap { flex: 1; display: flex; position: relative; }
+.statusbar { background: #0e0e0e; border-top: 1px solid #1e1e1e; padding: 3px 14px; font-size: 11px; color: #444; flex-shrink: 0; }
+#status-txt { color: #3a8f6f; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>LD Land · Parcel Analyzer</h1>
+  <div class="search-group">
+    <input type="text" id="addr" placeholder="Address..." value="293 Preacher Road, Reidsville, NC 27320" />
+    <button class="btn btn-primary" id="search-btn" onclick="searchAddress()">Analyze</button>
+  </div>
+  <div class="key-group">
+    <label>Google API Key</label>
+    <input type="text" id="gkey" placeholder="AIza..." />
+  </div>
+</div>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="s-sec">
+      <h3>Listing</h3>
+      <div class="prop-row"><span class="prop-label">Address</span><span class="prop-val" id="p-addr">293 Preacher Rd</span></div>
+      <div class="prop-row"><span class="prop-label">Price</span><span class="prop-val" id="p-price">$531,000</span></div>
+      <div class="prop-row"><span class="prop-label">Acres</span><span class="prop-val" id="p-acres">88</span></div>
+      <div class="prop-row"><span class="prop-label">$/Acre</span><span class="prop-val" id="p-ppa">$6,034</span></div>
+      <div class="prop-row"><span class="prop-label">MLS #</span><span class="prop-val" id="p-mls">1216816</span></div>
+      <div class="prop-row"><span class="prop-label">County</span><span class="prop-val" id="p-county">Rockingham, NC</span></div>
+      <div class="prop-row"><span class="prop-label">Coords</span><span class="prop-val" id="p-coords">—</span></div>
+    </div>
+
+    <div class="s-sec">
+      <h3>Basemap</h3>
+      <div class="layer-row"><input type="radio" name="base" id="b-sat" value="sat" checked><label for="b-sat">Satellite</label><div class="dot" style="background:#666"></div></div>
+      <div class="layer-row"><input type="radio" name="base" id="b-imgcont" value="imgcont"><label for="b-imgcont">Satellite + Contours</label><div class="dot" style="background:#a07830"></div></div>
+      <div class="layer-row"><input type="radio" name="base" id="b-topo" value="topo"><label for="b-topo">USGS Topo</label><div class="dot" style="background:#4a7a3a"></div></div>
+      <div class="layer-row"><input type="radio" name="base" id="b-osm" value="osm"><label for="b-osm">Street (OSM)</label><div class="dot" style="background:#3a6a8f"></div></div>
+      <p class="note">"Satellite + Contours" caps at zoom 16.</p>
+    </div>
+
+    <div class="s-sec">
+      <h3>Overlays</h3>
+      <div class="layer-row"><input type="checkbox" id="ov-flood" checked><label for="ov-flood">FEMA Flood Zones</label><div class="dot" style="background:#4a7fc1"></div></div>
+      <div class="layer-row"><input type="checkbox" id="ov-wetlands"><label for="ov-wetlands">NWI Wetlands</label><div class="dot" style="background:#3a9a5a"></div></div>
+      <div class="layer-row"><input type="checkbox" id="ov-soils"><label for="ov-soils">NRCS Soils</label><div class="dot" style="background:#c87a2a"></div></div>
+      <p class="note">Flood & wetlands load at zoom 12+. Zoom in if not visible.</p>
+    </div>
+
+    <div class="s-sec">
+      <h3>Parcel Boundary</h3>
+      <div class="regrid-box">
+        <p>Paste your Regrid API key to draw the real parcel outline.</p>
+        <input type="text" id="regrid-key" placeholder="sk_live_..." />
+        <button class="btn-sm" onclick="loadRegrid()">Load parcel</button>
+      </div>
+    </div>
+
+    <div class="s-sec">
+      <h3>Triage Flags</h3>
+      <div id="flags">
+        <span class="flag flag-danger">Private road access</span>
+        <span class="flag flag-warn">Off HWY 29 Business</span>
+        <span class="flag flag-ok">88 ac — large parcel</span>
+      </div>
+    </div>
+
+    <div class="s-sec">
+      <h3>Quick Links</h3>
+      <div class="links">
+        <a id="link-google" href="https://maps.google.com" target="_blank">Open in Google Maps ↗</a>
+        <a id="link-fema" href="https://msc.fema.gov/portal/search" target="_blank">FEMA Flood Map ↗</a>
+        <a id="link-nwi" href="https://www.fws.gov/program/national-wetlands-inventory/wetlands-mapper" target="_blank">NWI Wetlands Mapper ↗</a>
+        <a id="link-county" href="https://www.webgis.net/nc/rockingham/" target="_blank">Rockingham GIS ↗</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="map-wrap">
+    <div id="map"></div>
+  </div>
+</div>
+
+<div class="statusbar">Status: <span id="status-txt">Ready — paste Google API key and search an address</span></div>
+
+<script>
+const DEFAULT_LAT = 36.3608;
+const DEFAULT_LNG = -79.6742;
+
+const map = L.map('map').setView([DEFAULT_LAT, DEFAULT_LNG], 15);
+
+// ── Basemaps ──────────────────────────────────────────────────────────────────
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri', maxZoom: 19 });
+const imgTopo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}', { attribution: 'USGS Imagery Topo', maxZoom: 16 });
+const topo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', { attribution: 'USGS Topo', maxZoom: 16 });
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 });
+sat.addTo(map);
+const bases = { sat, imgcont: imgTopo, topo, osm };
+
+// ── FEMA Flood — using L.esri.dynamicMapLayer (handles ArcGIS dynamic services) ──
+const flood = L.esri.dynamicMapLayer({
+  url: 'https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer',
+  layers: [28],
+  opacity: 0.6,
+  f: 'image'
+});
+flood.addTo(map);
+
+// ── NWI Wetlands — using L.esri.dynamicMapLayer ───────────────────────────────
+const wetlands = L.esri.dynamicMapLayer({
+  url: 'https://fwspublicservices.wim.usgs.gov/wetlandsmapservice/rest/services/Wetlands/MapServer',
+  layers: [0],
+  opacity: 0.65,
+  f: 'image'
+});
+
+// ── NRCS Soils — WMS works fine for this one ──────────────────────────────────
+const soils = L.tileLayer.wms('https://SDMDataAccess.nrcs.usda.gov/Spatial/SDM.wms', {
+  layers: 'mapunitpoly', format: 'image/png', transparent: true, opacity: 0.5, attribution: 'NRCS'
+});
+
+// ── Marker & parcel ───────────────────────────────────────────────────────────
+let marker = null, parcelLayer = null;
+function setMarker(lat, lng, label) {
+  if (marker) map.removeLayer(marker);
+  marker = L.circleMarker([lat, lng], { radius: 9, color: '#FFD700', weight: 3, fillColor: '#FFD700', fillOpacity: 0.3 }).addTo(map).bindPopup(label).openPopup();
+}
+setMarker(DEFAULT_LAT, DEFAULT_LNG, '<strong>293 Preacher Road</strong><br>Reidsville, NC 27320');
+
+// ── Basemap switching ─────────────────────────────────────────────────────────
+document.querySelectorAll('input[name="base"]').forEach(r => {
+  r.addEventListener('change', function () {
+    Object.values(bases).forEach(b => { try { map.removeLayer(b); } catch(e){} });
+    bases[this.value].addTo(map);
+  });
+});
+
+// ── Overlay toggles ───────────────────────────────────────────────────────────
+document.getElementById('ov-flood').addEventListener('change', function () {
+  this.checked ? flood.addTo(map) : map.removeLayer(flood);
+  setStatus(this.checked ? 'FEMA flood zones on' : 'FEMA flood zones off');
+});
+document.getElementById('ov-wetlands').addEventListener('change', function () {
+  this.checked ? wetlands.addTo(map) : map.removeLayer(wetlands);
+  setStatus(this.checked ? 'NWI wetlands on' : 'NWI wetlands off');
+});
+document.getElementById('ov-soils').addEventListener('change', function () {
+  this.checked ? soils.addTo(map) : map.removeLayer(soils);
+  setStatus(this.checked ? 'NRCS soils on' : 'NRCS soils off');
+});
+
+function setStatus(m) { document.getElementById('status-txt').textContent = m; }
+
+// ── Geocoding ─────────────────────────────────────────────────────────────────
+async function searchAddress() {
+  const addr = document.getElementById('addr').value.trim();
+  if (!addr) return;
+  const gkey = document.getElementById('gkey').value.trim();
+  const btn = document.getElementById('search-btn');
+  btn.disabled = true; btn.textContent = 'Searching...';
+  setStatus('Geocoding...');
+  let lat = null, lng = null, display = null;
+
+  if (gkey) {
+    try {
+      const r = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addr)}&key=${gkey}`);
+      const d = await r.json();
+      if (d.status === 'OK' && d.results.length > 0) {
+        lat = d.results[0].geometry.location.lat;
+        lng = d.results[0].geometry.location.lng;
+        display = d.results[0].formatted_address;
+      }
+    } catch(e) {}
+  }
+
+  if (!lat) {
+    for (const t of [addr, addr.replace(/^0\s+/,'1 '), addr.split(',').slice(1).join(',').trim()]) {
+      try {
+        const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(t)}&limit=1&countrycodes=us`, { headers: {'User-Agent':'LDLandTool/1.0'} });
+        const d = await r.json();
+        if (d && d.length > 0) { lat = parseFloat(d[0].lat); lng = parseFloat(d[0].lon); display = d[0].display_name; break; }
+      } catch(e) {}
+    }
+  }
+
+  if (lat && lng) {
+    map.setView([lat, lng], 15);
+    setMarker(lat, lng, '<strong>' + addr + '</strong><br>' + lat.toFixed(5) + ', ' + lng.toFixed(5));
+    document.getElementById('p-addr').textContent = addr;
+    document.getElementById('p-coords').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5);
+    document.getElementById('link-google').href = `https://maps.google.com/?q=${lat},${lng}`;
+    setStatus('Found: ' + (display || addr));
+  } else {
+    setStatus('Not found — add your Google API key for reliable rural geocoding');
+  }
+  btn.disabled = false; btn.textContent = 'Analyze';
+}
+
+document.getElementById('addr').addEventListener('keydown', e => { if (e.key === 'Enter') searchAddress(); });
+
+// ── Regrid ────────────────────────────────────────────────────────────────────
+async function loadRegrid() {
+  const key = document.getElementById('regrid-key').value.trim();
+  if (!key) { setStatus('Enter a Regrid API key first'); return; }
+  const coords = document.getElementById('p-coords').textContent;
+  if (coords === '—') { setStatus('Search an address first'); return; }
+  const [lat, lng] = coords.split(',').map(parseFloat);
+  setStatus('Loading parcel from Regrid...');
+  try {
+    const r = await fetch(`https://app.regrid.com/api/v2/parcels/point?lat=${lat}&lon=${lng}&token=${key}&return_geometry=true`);
+    const d = await r.json();
+    if (d?.parcels?.features?.length > 0) {
+      if (parcelLayer) map.removeLayer(parcelLayer);
+      parcelLayer = L.geoJSON(d.parcels, { style: { color: '#FFD700', weight: 2.5, fillOpacity: 0.08, fillColor: '#FFD700', dashArray: '6 3' } }).addTo(map);
+      map.fitBounds(parcelLayer.getBounds());
+      const p = d.parcels.features[0].properties;
+      setStatus('Parcel loaded — ' + (p.ll_gisacre || '?') + ' ac · ' + (p.owner || ''));
+    } else { setStatus('No parcel found at this location'); }
+  } catch(e) { setStatus('Regrid error: ' + e.message); }
+}
+</script>
+</body>
+</html>
