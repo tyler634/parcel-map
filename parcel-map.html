@@ -104,7 +104,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
     <div class="s-sec">
       <h3>Overlays</h3>
-      <div class="layer-row"><input type="checkbox" id="ov-contours"><label for="ov-contours">Contour lines</label><div class="dot" style="background:#c8a84b"></div></div>
+      <div class="layer-row"><input type="checkbox" id="ov-topo"><label for="ov-topo">Topo overlay</label><div class="dot" style="background:#c8a84b"></div></div>
+      <div id="topo-slider-row" style="display:none; align-items:center; gap:8px; margin-bottom:7px; padding-left:4px;">
+        <label style="font-size:11px; color:#777; white-space:nowrap;">Opacity</label>
+        <input type="range" id="topo-opacity" min="10" max="90" value="50" step="5" style="flex:1;" />
+        <span id="topo-opacity-val" style="font-size:11px; color:#aaa; min-width:28px;">50%</span>
+      </div>
       <div class="layer-row"><input type="checkbox" id="ov-flood" checked><label for="ov-flood">FEMA Flood Zones</label><div class="dot" style="background:#4a7fc1"></div></div>
       <div class="layer-row"><input type="checkbox" id="ov-wetlands"><label for="ov-wetlands">NWI Wetlands</label><div class="dot" style="background:#3a9a5a"></div></div>
       <div class="layer-row"><input type="checkbox" id="ov-soils"><label for="ov-soils">NRCS Soils</label><div class="dot" style="background:#c87a2a"></div></div>
@@ -158,6 +163,11 @@ const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
 sat.addTo(map);
 const bases = { sat, imgcont: imgTopo, topo, osm };
 
+// Topo overlay on satellite — stacks USGS topo tiles transparently over any basemap
+const topoOverlay = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'USGS', maxZoom: 16, opacity: 0.5
+});
+
 // ── FEMA Flood — dynamic map layer with explicit web mercator reprojection ────
 const flood = L.esri.dynamicMapLayer({
   url: 'https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer',
@@ -201,9 +211,21 @@ document.querySelectorAll('input[name="base"]').forEach(r => {
 });
 
 // ── Overlay toggles ───────────────────────────────────────────────────────────
-document.getElementById('ov-contours').addEventListener('change', function () {
-  this.checked ? contours.addTo(map) : map.removeLayer(contours);
-  setStatus(this.checked ? 'Contours on' : 'Contours off');
+document.getElementById('ov-topo').addEventListener('change', function () {
+  const sliderRow = document.getElementById('topo-slider-row');
+  if (this.checked) {
+    topoOverlay.addTo(map);
+    sliderRow.style.display = 'flex';
+    setStatus('Topo overlay on — adjust opacity with slider');
+  } else {
+    map.removeLayer(topoOverlay);
+    sliderRow.style.display = 'none';
+    setStatus('Topo overlay off');
+  }
+});
+document.getElementById('topo-opacity').addEventListener('input', function () {
+  topoOverlay.setOpacity(this.value / 100);
+  document.getElementById('topo-opacity-val').textContent = this.value + '%';
 });
 document.getElementById('ov-flood').addEventListener('change', function () {
   this.checked ? flood.addTo(map) : map.removeLayer(flood);
@@ -267,35 +289,38 @@ async function searchAddress() {
 
 document.getElementById('addr').addEventListener('keydown', e => { if (e.key === 'Enter') searchAddress(); });
 
-// ── USGS Contours — correct endpoint ─────────────────────────────────────────
-const contours = L.esri.dynamicMapLayer({
-  url: 'https://carto.nationalmap.gov/arcgis/rest/services/contours/MapServer',
-  layers: [5],
-  opacity: 1.0,
-  format: 'png32',
-  transparent: true,
-  bboxSR: 3857,
-  imageSR: 3857,
-  f: 'image'
-});
-
-// ── Click to identify and highlight parcel ────────────────────────────────────
+// ── NC OneMap Parcels
 let highlightLayer = null;
 
 map.on('click', async function(e) {
   const { lat, lng } = e.latlng;
-  try {
-    const bounds = map.getBounds();
-    const size = map.getSize();
-    const sw = bounds.getSouthWest();
-    const ne = bounds.getNorthEast();
-    const bbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
-    const x = Math.round((lng - sw.lng) / (ne.lng - sw.lng) * size.x);
-    const y = Math.round((ne.lat - lat) / (ne.lat - sw.lat) * size.y);
+  const bounds = map.getBounds();
+  const size = map.getSize();
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
 
+  // Convert to web mercator for the identify call
+  function toWebMercator(lon, lat) {
+    const x = lon * 20037508.34 / 180;
+    let y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
+    y = y * 20037508.34 / 180;
+    return [x, y];
+  }
+
+  const [swX, swY] = toWebMercator(sw.lng, sw.lat);
+  const [neX, neY] = toWebMercator(ne.lng, ne.lat);
+  const [clickX, clickY] = toWebMercator(lng, lat);
+
+  setStatus('Identifying parcel...');
+  try {
     const url = `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/identify?` +
-      `f=json&tolerance=3&returnGeometry=true&imageDisplay=${size.x},${size.y},96` +
-      `&mapExtent=${bbox}&sr=4326&layers=all:1&geometry=${lng},${lat}&geometryType=esriGeometryPoint`;
+      `f=json&tolerance=5&returnGeometry=true` +
+      `&imageDisplay=${size.x},${size.y},96` +
+      `&mapExtent=${swX},${swY},${neX},${neY}` +
+      `&sr=102100` +
+      `&layers=all:1` +
+      `&geometry=${clickX},${clickY}` +
+      `&geometryType=esriGeometryPoint`;
 
     const res = await fetch(url);
     const data = await res.json();
@@ -304,27 +329,44 @@ map.on('click', async function(e) {
       const result = data.results[0];
       const attrs = result.attributes;
 
+      // Convert Esri polygon rings to Leaflet polygon
       if (highlightLayer) map.removeLayer(highlightLayer);
-      highlightLayer = L.geoJSON(result.geometry ? {
-        type: 'Feature',
-        geometry: result.geometry
-      } : null, {
-        style: { color: '#ff2222', weight: 3, fillColor: '#ff2222', fillOpacity: 0.15 }
-      }).addTo(map);
 
-      const owner = attrs['Owner'] || attrs['OWNER'] || attrs['owner'] || '—';
-      const acres = attrs['Calc Acres'] || attrs['CALC_ACRES'] || attrs['gis_acres'] || attrs['GISACRES'] || '—';
-      const pid = attrs['Parcel ID'] || attrs['PARCEL_ID'] || attrs['PIN'] || attrs['pin'] || '—';
-      const address = attrs['Site Address'] || attrs['SITE_ADDRESS'] || attrs['siteadr'] || '—';
+      if (result.geometry && result.geometry.rings) {
+        const rings = result.geometry.rings.map(ring =>
+          ring.map(pt => {
+            // Convert web mercator back to lat/lng
+            const lon = (pt[0] / 20037508.34) * 180;
+            let lat2 = (pt[1] / 20037508.34) * 180;
+            lat2 = 180 / Math.PI * (2 * Math.atan(Math.exp(lat2 * Math.PI / 180)) - Math.PI / 2);
+            return [lat2, lon];
+          })
+        );
+        highlightLayer = L.polygon(rings, {
+          color: '#ff2222',
+          weight: 3,
+          fillColor: '#ff2222',
+          fillOpacity: 0.2,
+          dashArray: null
+        }).addTo(map);
+      }
+
+      // Try various field name formats NC OneMap might return
+      const owner = attrs['Owner'] || attrs['OWNER'] || attrs['owner'] || attrs['OwnersName'] || '—';
+      const acres = attrs['Calc Acres'] || attrs['CalcAcres'] || attrs['CALC_ACRES'] || attrs['gis_acres'] || attrs['GisAcres'] || '—';
+      const pid = attrs['Parcel ID'] || attrs['ParcelID'] || attrs['PARCEL_ID'] || attrs['PIN'] || attrs['pin_num'] || '—';
+      const address = attrs['Site Address'] || attrs['SiteAddress'] || attrs['SITE_ADDRESS'] || attrs['siteadr'] || '—';
 
       document.getElementById('p-owner').textContent = owner;
       document.getElementById('p-pid').textContent = pid;
-      document.getElementById('p-gisacres').textContent = acres;
+      document.getElementById('p-gisacres').textContent = typeof acres === 'number' ? acres.toFixed(2) : acres;
       document.getElementById('p-siteaddr').textContent = address;
-      setStatus('Parcel selected — click another to change');
+      setStatus('Parcel identified — click another to change');
+    } else {
+      setStatus('No parcel found at click location — try clicking inside a parcel boundary');
     }
-  } catch(e) {
-    setStatus('Click identify error: ' + e.message);
+  } catch(err) {
+    setStatus('Identify error: ' + err.message);
   }
 });
 
