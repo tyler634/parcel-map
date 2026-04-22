@@ -220,7 +220,10 @@ topoOverlay.addTo(map);
 let marker = null, parcelLayer = null;
 function setMarker(lat, lng, label) {
   if (marker) map.removeLayer(marker);
-  marker = L.circleMarker([lat, lng], { radius: 9, color: '#FFD700', weight: 3, fillColor: '#FFD700', fillOpacity: 0.3 }).addTo(map).bindPopup(label).openPopup();
+  // Address label popup intentionally omitted — the sidebar already shows
+  // the address, and the popup obstructed contour lines / parcel geometry
+  // in screenshots. Keep the gold circle so the point is still visible.
+  marker = L.circleMarker([lat, lng], { radius: 9, color: '#FFD700', weight: 3, fillColor: '#FFD700', fillOpacity: 0.3 }).addTo(map);
 }
 setMarker(DEFAULT_LAT, DEFAULT_LNG, '<strong>293 Preacher Road</strong><br>Reidsville, NC 27320');
 
