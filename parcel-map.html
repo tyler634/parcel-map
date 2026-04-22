@@ -383,9 +383,13 @@ async function identifyParcelAt(lat, lng) {
       document.getElementById('p-landval').textContent = landval != null ? '$' + parseInt(landval).toLocaleString() : '—';
       document.getElementById('p-saldate').textContent = saleDate;
       setStatus('Parcel identified — click another to change');
+      if (window.__pmIdentifyDone) window.__pmIdentifyDone(Boolean(result.geometry && result.geometry.rings));
+    } else if (window.__pmIdentifyDone) {
+      window.__pmIdentifyDone(false);
     }
   } catch(err) {
     setStatus('Identify error: ' + err.message);
+    if (window.__pmIdentifyDone) window.__pmIdentifyDone(false);
   }
 }
 
@@ -500,6 +504,140 @@ document.getElementById('ov-parcels').addEventListener('change', function () {
   this.checked ? parcels.addTo(map) : map.removeLayer(parcels);
   setStatus(this.checked ? 'Parcel lines on' : 'Parcel lines off');
 });
+
+// ── Ready tracking for headless screenshot automation ────────────────────────
+// A Playwright driver can deterministically screenshot this page by polling:
+//   await page.waitForFunction(() => window.__parcelReady === true, { timeout: 20000 });
+// The flag flips true once every visible Leaflet tile layer + Esri dynamic
+// layer has finished loading (with a debounce to swallow the re-tile burst
+// triggered by fitBounds after identify) AND the parcel identify call has
+// resolved one way or the other. There's also a hard cap so a slow/stuck
+// layer can't wedge a headless run forever. window.__parcelReadyStatus
+// carries diagnostics (phase, pendingLoads, identifyDone, polygonDrawn,
+// elapsedMs, notes).
+window.__parcelReady = false;
+window.__parcelReadyStatus = {
+  phase: 'init',
+  pendingLoads: 0,
+  identifyDone: false,
+  polygonDrawn: false,
+  startedAt: Date.now(),
+  elapsedMs: 0,
+  notes: []
+};
+
+(function () {
+  // Layers must be idle this long before we call the map "settled". The wave
+  // of tile requests triggered by map.fitBounds(...) after the identify call
+  // would otherwise cause a false-positive ready before the final view paints.
+  var QUIET_MS = 1500;
+  // Identify watchdog — force identifyDone=true if no signal arrives in this
+  // many ms. Covers edge cases: no lat/lng/parno/address in the URL, or the
+  // parno branch not finding anything and never calling identifyParcelAt.
+  var IDENTIFY_WATCHDOG_MS = 14000;
+  // Absolute cap. Flip ready regardless so a stuck layer doesn't block forever.
+  var HARD_CAP_MS = 20000;
+
+  var pending = 0;
+  var quietTimer = null;
+  var readyFlipped = false;
+
+  function note(s) {
+    var n = window.__parcelReadyStatus.notes;
+    n.push(s);
+    if (n.length > 80) n.shift();
+  }
+
+  function flipReady(phase) {
+    if (readyFlipped) return;
+    readyFlipped = true;
+    window.__parcelReadyStatus.phase = phase;
+    window.__parcelReadyStatus.elapsedMs = Date.now() - window.__parcelReadyStatus.startedAt;
+    window.__parcelReady = true;
+    if (quietTimer) { clearTimeout(quietTimer); quietTimer = null; }
+    note('ready flipped: ' + phase);
+  }
+
+  function scheduleReadyCheck() {
+    if (readyFlipped) return;
+    if (quietTimer) clearTimeout(quietTimer);
+    quietTimer = setTimeout(function () {
+      if (pending === 0 && window.__parcelReadyStatus.identifyDone) {
+        flipReady('ready');
+      }
+    }, QUIET_MS);
+  }
+
+  function startLoad() {
+    if (readyFlipped) return;
+    pending++;
+    window.__parcelReadyStatus.pendingLoads = pending;
+    if (quietTimer) { clearTimeout(quietTimer); quietTimer = null; }
+  }
+
+  function endLoad() {
+    if (readyFlipped) return;
+    pending = Math.max(0, pending - 1);
+    window.__parcelReadyStatus.pendingLoads = pending;
+    scheduleReadyCheck();
+  }
+
+  function attachToLayer(layer) {
+    if (!layer || layer.__pmTracked) return;
+    if (typeof layer.on !== 'function') return;
+    layer.__pmTracked = true;
+
+    // Leaflet tile layers emit loading/load/tileerror.
+    layer.on('loading',   startLoad);
+    layer.on('load',      endLoad);
+    layer.on('tileerror', endLoad);
+
+    // Esri-leaflet dynamicMapLayer emits requeststart/requestend/requesterror.
+    layer.on('requeststart', startLoad);
+    layer.on('requestend',   endLoad);
+    layer.on('requesterror', endLoad);
+  }
+
+  // Attach to whatever is already on the map, plus anything added later
+  // (e.g. user toggles a radio or checkbox, or code flips parcels on).
+  map.eachLayer(attachToLayer);
+  map.on('layeradd', function (e) { attachToLayer(e.layer); });
+
+  // Also attach to the bare declarations so layers not currently on the map
+  // (soils, alternate basemaps) get tracked if they're added mid-load.
+  try {
+    [sat, imgTopo, topo, osm, topoOverlay, flood, wetlands, soils, parcels].forEach(attachToLayer);
+  } catch (e) {
+    note('layer reference sweep error: ' + e.message);
+  }
+
+  // Called by identifyParcelAt on every exit path so we know the parcel
+  // lookup has concluded (whether or not a polygon was drawn).
+  window.__pmIdentifyDone = function (polygonDrawn) {
+    if (window.__parcelReadyStatus.identifyDone) return;
+    window.__parcelReadyStatus.identifyDone = true;
+    window.__parcelReadyStatus.polygonDrawn = Boolean(polygonDrawn);
+    note('identify done (polygonDrawn=' + Boolean(polygonDrawn) + ')');
+    scheduleReadyCheck();
+  };
+
+  // Watchdog: if identifyParcelAt is never called (no URL params, or parno
+  // not found so the setTimeout that queues identifyParcelAt is never armed),
+  // force identifyDone after this many ms so the ready check can still flip.
+  setTimeout(function () {
+    if (!window.__parcelReadyStatus.identifyDone) {
+      note('identify watchdog fired');
+      window.__parcelReadyStatus.identifyDone = true;
+      scheduleReadyCheck();
+    }
+  }, IDENTIFY_WATCHDOG_MS);
+
+  // Absolute cap: no matter what's pending, flip ready so a headless driver
+  // can move on. The phase 'timeout' tells the caller this was a fallback.
+  setTimeout(function () { flipReady('timeout'); }, HARD_CAP_MS);
+
+  note('tracking installed');
+})();
 </script>
 </body>
 </html>
