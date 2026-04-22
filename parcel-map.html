@@ -181,15 +181,21 @@ const map = L.map('map').setView([DEFAULT_LAT, DEFAULT_LNG], 15);
 
 // ── Basemaps ──────────────────────────────────────────────────────────────────
 const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri', maxZoom: 19 });
-const imgTopo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}', { attribution: 'USGS Imagery Topo', maxZoom: 16 });
-const topo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', { attribution: 'USGS Topo', maxZoom: 16 });
+// USGS services only ship tiles up to z16. We still want the layer to
+// *show* at deeper zooms (parcel fitBounds often lands us at z17-18),
+// so set maxNativeZoom:16 and keep maxZoom high — Leaflet will upscale
+// the z16 tile rather than dropping out entirely.
+const imgTopo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}', { attribution: 'USGS Imagery Topo', maxNativeZoom: 16, maxZoom: 19 });
+const topo = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', { attribution: 'USGS Topo', maxNativeZoom: 16, maxZoom: 19 });
 const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 });
 sat.addTo(map);
 const bases = { sat, imgcont: imgTopo, topo, osm };
 
-// Topo overlay on satellite — stacks USGS topo tiles transparently over any basemap
+// Topo overlay on satellite — stacks USGS topo tiles transparently over
+// any basemap. Same maxNativeZoom treatment as the base layers so the
+// contour overlay stays visible after identify's fitBounds pushes past z16.
 const topoOverlay = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', {
-  attribution: 'USGS', maxZoom: 16, opacity: 0.7
+  attribution: 'USGS', maxNativeZoom: 16, maxZoom: 19, opacity: 0.7
 });
 
 // ── FEMA Flood ────────────────────────────────────────────────────────────────
