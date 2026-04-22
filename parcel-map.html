@@ -359,7 +359,7 @@ async function identifyParcelAt(lat, lng) {
           })
         );
         highlightLayer = L.polygon(rings, {
-          color: '#ff2222', weight: 3, fillColor: '#ff2222', fillOpacity: 0.2
+          color: '#ff2222', weight: 3, fill: false
         }).addTo(map);
         map.fitBounds(highlightLayer.getBounds(), { padding: [40, 40] });
       }
