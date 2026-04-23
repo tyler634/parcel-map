@@ -448,10 +448,13 @@ async function highlightParcelsByParnos(parnos) {
       const whereClause =
         `(parno='${parno}'+OR+altparno='${parno}'+OR+nparno='${parno}')${countyClause}`;
 
-      // /0/query answers attribute where= with returnGeometry=true — same
-      // pattern as the single-parno branch below.
+      // Layer 1 (polygons) — not layer 0 (points). MapServer/?f=json shows
+      // id=0 is esriGeometryPoint and id=1 is esriGeometryPolygon; asking
+      // /0/query with returnGeometry=true comes back with point geoms, so
+      // the `feat.geometry.rings` check below never matches and no polygon
+      // ever gets drawn. Layer 1 is where the actual polygon rings live.
       const queryUrl =
-        `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/0/query?` +
+        `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/1/query?` +
         `where=${whereClause}` +
         `&outFields=parno,altparno,nparno,ownname,gisacres,siteadd,cntyname,landval,parusedesc,saledatetx` +
         `&returnGeometry=true&outSR=4326&f=json`;
@@ -475,7 +478,7 @@ async function highlightParcelsByParnos(parnos) {
         // Retry without the county clause — same fallback the single-parno
         // branch does, since some counties tag with alternate names.
         const fallbackUrl =
-          `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/0/query?` +
+          `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/1/query?` +
           `where=(parno='${parno}'+OR+altparno='${parno}'+OR+nparno='${parno}')` +
           `&outFields=parno,altparno,nparno,ownname,gisacres,siteadd,cntyname,landval,parusedesc,saledatetx` +
           `&returnGeometry=true&outSR=4326&f=json`;
