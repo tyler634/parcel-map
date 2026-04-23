@@ -163,6 +163,7 @@ const pLat    = params.get('lat');
 const pLng    = params.get('lng');
 const pAddr   = params.get('address');
 const pParno  = params.get('parno');
+const pParnos = params.get('parnos'); // comma-separated — multi-parcel listings
 const pPrice  = params.get('price');
 const pAcres  = params.get('acres');
 const pMls    = params.get('mls');
@@ -432,29 +433,25 @@ async function identifyParcelAt(lat, lng) {
   }
 }
 
-// ── Startup: auto-load from URL params ────────────────────────────────────────
-async function autoInit() {
-  // If lat/lng in URL — center map and auto-identify
-  if (pLat && pLng) {
-    const lat = parseFloat(pLat);
-    const lng = parseFloat(pLng);
-    map.setView([lat, lng], 16);
-    setMarker(lat, lng, pAddr || (lat.toFixed(5) + ', ' + lng.toFixed(5)));
-    document.getElementById('p-coords').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5);
-    document.getElementById('link-google').href = `https://maps.google.com/?q=${lat},${lng}`;
-    setTimeout(() => identifyParcelAt(lat, lng), 800);
-    setStatus('Auto-loading parcel from URL...');
-  }
-  else if (pParno) {
-    setStatus('Looking up parcel ID ' + pParno + '...');
+// ── Multi-parcel highlight: fetch geometry for each parno in the list and
+// outline all of them in one featureGroup. Used when pipeline.js passes
+// parcels_all (primary + same-owner extras) via &parnos=P1,P2,P3. The first
+// parno in the list is treated as the primary for sidebar attributes.
+async function highlightParcelsByParnos(parnos) {
+  const polygons = [];
+  const allAttrs = [];
+  for (const parno of parnos) {
     try {
-      // Try parno, altparno, and nparno — county stores ID in different fields
       const countyClause = pCounty
         ? `+AND+UPPER(cntyname)='${encodeURIComponent(pCounty.toUpperCase())}'`
         : '';
-      const whereClause = `(parno='${pParno}'+OR+altparno='${pParno}'+OR+nparno='${pParno}')${countyClause}`;
+      const whereClause =
+        `(parno='${parno}'+OR+altparno='${parno}'+OR+nparno='${parno}')${countyClause}`;
 
-      const queryUrl = `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/0/query?` +
+      // /0/query answers attribute where= with returnGeometry=true — same
+      // pattern as the single-parno branch below.
+      const queryUrl =
+        `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/0/query?` +
         `where=${whereClause}` +
         `&outFields=parno,altparno,nparno,ownname,gisacres,siteadd,cntyname,landval,parusedesc,saledatetx` +
         `&returnGeometry=true&outSR=4326&f=json`;
@@ -464,47 +461,122 @@ async function autoInit() {
 
       if (data.features && data.features.length > 0) {
         const feat = data.features[0];
-        const lat = feat.geometry.y;
-        const lng = feat.geometry.x;
-        map.setView([lat, lng], 16);
-        setMarker(lat, lng, 'Parcel ' + pParno);
-        document.getElementById('p-coords').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5);
-        document.getElementById('link-google').href = `https://maps.google.com/?q=${lat},${lng}`;
-        setTimeout(() => identifyParcelAt(lat, lng), 800);
-        setStatus('Found parcel ' + pParno + ' — loading...');
-      } else {
-        // If no result with county filter, try without it
-        if (pCounty) {
-          setStatus('Trying without county filter...');
-          const fallbackUrl = `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/0/query?` +
-            `where=parno='${pParno}'+OR+altparno='${pParno}'+OR+nparno='${pParno}'` +
-            `&outFields=parno,ownname,gisacres,siteadd,cntyname,landval,parusedesc,saledatetx` +
-            `&returnGeometry=true&outSR=4326&f=json`;
-          const res2 = await fetch(fallbackUrl);
-          const data2 = await res2.json();
-          if (data2.features && data2.features.length > 0) {
-            const feat = data2.features[0];
-            const lat = feat.geometry.y;
-            const lng = feat.geometry.x;
-            map.setView([lat, lng], 16);
-            setMarker(lat, lng, 'Parcel ' + pParno);
-            document.getElementById('p-coords').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5);
-            document.getElementById('link-google').href = `https://maps.google.com/?q=${lat},${lng}`;
-            setTimeout(() => identifyParcelAt(lat, lng), 800);
-            setStatus('Found parcel ' + pParno + ' — loading...');
-          } else {
-            setStatus('Parcel ID ' + pParno + ' not found. The county may use a different ID format — try using lat/lng instead.');
+        allAttrs.push(feat.attributes);
+        if (feat.geometry && feat.geometry.rings) {
+          // outSR=4326 so rings come back as [lng, lat]; Leaflet wants [lat, lng].
+          const rings = feat.geometry.rings.map(ring =>
+            ring.map(pt => [pt[1], pt[0]])
+          );
+          polygons.push(L.polygon(rings, {
+            color: '#ff2222', weight: 3, fill: false
+          }));
+        }
+      } else if (pCounty) {
+        // Retry without the county clause — same fallback the single-parno
+        // branch does, since some counties tag with alternate names.
+        const fallbackUrl =
+          `https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/0/query?` +
+          `where=(parno='${parno}'+OR+altparno='${parno}'+OR+nparno='${parno}')` +
+          `&outFields=parno,altparno,nparno,ownname,gisacres,siteadd,cntyname,landval,parusedesc,saledatetx` +
+          `&returnGeometry=true&outSR=4326&f=json`;
+        const res2 = await fetch(fallbackUrl);
+        const data2 = await res2.json();
+        if (data2.features && data2.features.length > 0) {
+          const feat = data2.features[0];
+          allAttrs.push(feat.attributes);
+          if (feat.geometry && feat.geometry.rings) {
+            const rings = feat.geometry.rings.map(ring =>
+              ring.map(pt => [pt[1], pt[0]])
+            );
+            polygons.push(L.polygon(rings, {
+              color: '#ff2222', weight: 3, fill: false
+            }));
           }
-        } else {
-          setStatus('Parcel ID ' + pParno + ' not found. Try adding &county=CountyName or use lat/lng.');
         }
       }
-    } catch(e) {
-      setStatus('Parcel lookup error: ' + e.message);
+    } catch (err) {
+      // Keep going on the other parnos — partial highlight is still useful.
+      setStatus('Error loading parcel ' + parno + ': ' + err.message);
     }
   }
-  // If address in URL but no lat/lng — geocode then identify
-  else if (pAddr) {
+
+  if (polygons.length === 0) {
+    setStatus('No parcels found for ' + parnos.join(', '));
+    if (window.__pmIdentifyDone) window.__pmIdentifyDone(false);
+    return;
+  }
+
+  if (highlightLayer) map.removeLayer(highlightLayer);
+  highlightLayer = L.featureGroup(polygons).addTo(map);
+  map.fitBounds(highlightLayer.getBounds(), { padding: [40, 40] });
+
+  // Sidebar: primary attrs drive the single-value fields; acres + land value
+  // are summed across all parcels we successfully pulled.
+  const primary = allAttrs[0] || {};
+  const combinedAcres = allAttrs.reduce(
+    (s, a) => s + (parseFloat(a.gisacres) || 0), 0
+  );
+  const combinedLandVal = allAttrs.reduce(
+    (s, a) => s + (parseInt(a.landval) || 0), 0
+  );
+  const primaryPid = primary.parno || primary.nparno || '—';
+
+  document.getElementById('p-owner').textContent = primary.ownname || '—';
+  document.getElementById('p-pid').textContent = allAttrs.length > 1
+    ? primaryPid + ' (+' + (allAttrs.length - 1) + ' more)'
+    : primaryPid;
+  document.getElementById('p-gisacres').textContent =
+    combinedAcres > 0 ? combinedAcres.toFixed(2) : '—';
+  document.getElementById('p-siteaddr').textContent = primary.siteadd || '—';
+  document.getElementById('p-county-parcel').textContent = primary.cntyname || '—';
+  document.getElementById('p-use').textContent = primary.parusedesc || '—';
+  document.getElementById('p-landval').textContent =
+    combinedLandVal > 0 ? '$' + combinedLandVal.toLocaleString() : '—';
+  document.getElementById('p-saldate').textContent = primary.saledatetx || '—';
+
+  setStatus(allAttrs.length > 1
+    ? 'Highlighted ' + allAttrs.length + ' parcels (' + combinedAcres.toFixed(2) + ' ac combined)'
+    : 'Highlighted parcel — ' + combinedAcres.toFixed(2) + ' ac');
+  if (window.__pmIdentifyDone) window.__pmIdentifyDone(true);
+}
+
+// ── Startup: auto-load from URL params ────────────────────────────────────────
+async function autoInit() {
+  // Build the effective parno list. &parnos=A,B,C takes priority; &parno=X
+  // is treated as a one-item list so both paths share the multi-parcel
+  // rendering code.
+  const parnosList = pParnos
+    ? pParnos.split(',').map(s => s.trim()).filter(Boolean)
+    : (pParno ? [pParno] : []);
+
+  // Pre-center on lat/lng so tiles start loading at the right area while
+  // the parcel query is in flight. fitBounds on the parcel group overrides
+  // this later, but it keeps the view stable before the highlight paints.
+  if (pLat && pLng) {
+    const lat = parseFloat(pLat);
+    const lng = parseFloat(pLng);
+    map.setView([lat, lng], 16);
+    setMarker(lat, lng, pAddr || (lat.toFixed(5) + ', ' + lng.toFixed(5)));
+    document.getElementById('p-coords').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5);
+    document.getElementById('link-google').href = `https://maps.google.com/?q=${lat},${lng}`;
+  }
+
+  if (parnosList.length > 0) {
+    setStatus('Loading ' + parnosList.length + ' parcel(s)...');
+    setTimeout(() => highlightParcelsByParnos(parnosList), 800);
+    return;
+  }
+
+  if (pLat && pLng) {
+    const lat = parseFloat(pLat);
+    const lng = parseFloat(pLng);
+    setTimeout(() => identifyParcelAt(lat, lng), 800);
+    setStatus('Auto-loading parcel from URL...');
+    return;
+  }
+
+  // Address-only entry: geocode, then identify the resolved lat/lng.
+  if (pAddr) {
     await searchAddress();
     const coords = document.getElementById('p-coords').textContent;
     if (coords !== '—') {
@@ -574,7 +646,7 @@ window.__parcelReadyStatus = {
   // many ms. Covers edge cases: no lat/lng/parno/address in the URL, or the
   // parno branch not finding anything and never calling identifyParcelAt.
   // Sized to accommodate the retry loop in identifyParcelAt:
-  // 3 attempts × 8s timeout + 1s+2s backoff = 27s worst case.
+  // 3 attempts x 8s timeout + 1s+2s backoff = 27s worst case.
   var IDENTIFY_WATCHDOG_MS = 32000;
   // Absolute cap. Flip ready regardless so a stuck layer doesn't block forever.
   var HARD_CAP_MS = 38000;
