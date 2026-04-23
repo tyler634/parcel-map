@@ -350,8 +350,38 @@ async function identifyParcelAt(lat, lng) {
       `&sr=102100&layers=all:1` +
       `&geometry=${clickX},${clickY}&geometryType=esriGeometryPoint`;
 
-    const res = await fetch(url);
-    const data = await res.json();
+    // NC OneMap's identify endpoint is flaky — requests routinely hang with
+    // no response (no FAIL, no RES, just silence). We've seen this happen
+    // both in headless automation AND via server-side axios, so it's the
+    // origin, not our client. Retry with per-attempt timeout via AbortController
+    // so a stalled attempt can't wedge the whole identify. 3 attempts with
+    // 1s/2s backoff — tight enough that we stay under the in-page watchdog,
+    // generous enough that one slow response doesn't sink the screenshot.
+    const data = await (async function () {
+      const ATTEMPTS = 3;
+      const PER_ATTEMPT_MS = 8000;
+      let lastErr = null;
+      for (let i = 0; i < ATTEMPTS; i++) {
+        const controller = new AbortController();
+        const to = setTimeout(() => controller.abort(), PER_ATTEMPT_MS);
+        try {
+          const res = await fetch(url, { signal: controller.signal });
+          clearTimeout(to);
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return await res.json();
+        } catch (err) {
+          clearTimeout(to);
+          lastErr = err;
+          const isLast = i === ATTEMPTS - 1;
+          setStatus('Identify attempt ' + (i + 1) + '/' + ATTEMPTS +
+            (isLast ? ' failed' : ' timed out — retrying...'));
+          if (!isLast) {
+            await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+          }
+        }
+      }
+      throw lastErr || new Error('identify exhausted retries');
+    })();
 
     if (data.results && data.results.length > 0) {
       const result = data.results[0];
@@ -543,9 +573,11 @@ window.__parcelReadyStatus = {
   // Identify watchdog — force identifyDone=true if no signal arrives in this
   // many ms. Covers edge cases: no lat/lng/parno/address in the URL, or the
   // parno branch not finding anything and never calling identifyParcelAt.
-  var IDENTIFY_WATCHDOG_MS = 14000;
+  // Sized to accommodate the retry loop in identifyParcelAt:
+  // 3 attempts × 8s timeout + 1s+2s backoff = 27s worst case.
+  var IDENTIFY_WATCHDOG_MS = 32000;
   // Absolute cap. Flip ready regardless so a stuck layer doesn't block forever.
-  var HARD_CAP_MS = 20000;
+  var HARD_CAP_MS = 38000;
 
   var pending = 0;
   var quietTimer = null;
