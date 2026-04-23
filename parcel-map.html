@@ -468,6 +468,38 @@ async function identifyParcelAt(lat, lng) {
   }
 }
 
+// Query NC OneMap with the same abort+retry pattern identifyParcelAt uses.
+// The MapServer/1/query endpoint goes silent for minutes at a time (no
+// response, no error, just a stalled socket) and a plain fetch() would
+// leave highlightParcelsByParnos frozen on "Loading 1 parcel(s)..." until
+// the __parcelReady watchdog gives up — which means no polygon ever gets
+// drawn on the screenshot. 3 attempts × 8s abort timeout, 1s/2s backoff.
+async function fetchJsonWithRetry(url, label) {
+  const ATTEMPTS = 3;
+  const PER_ATTEMPT_MS = 8000;
+  let lastErr = null;
+  for (let i = 0; i < ATTEMPTS; i++) {
+    const controller = new AbortController();
+    const to = setTimeout(() => controller.abort(), PER_ATTEMPT_MS);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(to);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.json();
+    } catch (err) {
+      clearTimeout(to);
+      lastErr = err;
+      const isLast = i === ATTEMPTS - 1;
+      setStatus(label + ' attempt ' + (i + 1) + '/' + ATTEMPTS +
+        (isLast ? ' failed' : ' timed out — retrying...'));
+      if (!isLast) {
+        await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      }
+    }
+  }
+  throw lastErr || new Error(label + ' exhausted retries');
+}
+
 // ── Multi-parcel highlight: fetch geometry for each parno in the list and
 // outline all of them in one featureGroup. Used when pipeline.js passes
 // parcels_all (primary + same-owner extras) via &parnos=P1,P2,P3. The first
@@ -494,8 +526,7 @@ async function highlightParcelsByParnos(parnos) {
         `&outFields=parno,altparno,nparno,ownname,gisacres,siteadd,cntyname,landval,parusedesc,saledatetx` +
         `&returnGeometry=true&outSR=4326&f=json`;
 
-      const res = await fetch(queryUrl);
-      const data = await res.json();
+      const data = await fetchJsonWithRetry(queryUrl, 'Parcel ' + parno + ' query');
 
       if (data.features && data.features.length > 0) {
         const feat = data.features[0];
@@ -517,8 +548,7 @@ async function highlightParcelsByParnos(parnos) {
           `where=(parno='${parno}'+OR+altparno='${parno}'+OR+nparno='${parno}')` +
           `&outFields=parno,altparno,nparno,ownname,gisacres,siteadd,cntyname,landval,parusedesc,saledatetx` +
           `&returnGeometry=true&outSR=4326&f=json`;
-        const res2 = await fetch(fallbackUrl);
-        const data2 = await res2.json();
+        const data2 = await fetchJsonWithRetry(fallbackUrl, 'Parcel ' + parno + ' fallback');
         if (data2.features && data2.features.length > 0) {
           const feat = data2.features[0];
           allAttrs.push(feat.attributes);
