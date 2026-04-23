@@ -117,7 +117,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div class="layer-row"><input type="checkbox" id="ov-flood" checked><label for="ov-flood">FEMA Flood Zones</label><div class="dot" style="background:#4a7fc1"></div></div>
       <div class="layer-row"><input type="checkbox" id="ov-wetlands" checked><label for="ov-wetlands">NWI Wetlands</label><div class="dot" style="background:#3a9a5a"></div></div>
       <div class="layer-row"><input type="checkbox" id="ov-soils"><label for="ov-soils">NRCS Soils</label><div class="dot" style="background:#c87a2a"></div></div>
-      <p class="note">Flood & wetlands load at zoom 12+. Zoom in if not visible.</p>
+      <div class="layer-row"><input type="checkbox" id="ov-transmission" checked><label for="ov-transmission">Transmission Lines (138 kV+)</label><div class="dot" style="background:#ff7a1a"></div></div>
+      <p class="note">Flood & wetlands load at zoom 12+. Transmission lines load at zoom 10+. Zoom in if not visible.</p>
     </div>
 
     <div class="s-sec">
@@ -218,10 +219,40 @@ const soils = L.tileLayer.wms('https://SDMDataAccess.nrcs.usda.gov/Spatial/SDM.w
   layers: 'mapunitpoly', format: 'image/png', transparent: true, opacity: 0.5, attribution: 'NRCS'
 });
 
+// ── HIFLD Electric Power Transmission Lines ──────────────────────────────────
+// High-voltage transmission lines from the HIFLD Open Data portal. Tyler
+// uses land.id's equivalent layer to spot easement risk — lines crossing
+// a parcel or anchoring a tower are a meaningful negative, sometimes a
+// dealbreaker. We filter VOLTAGE >= 138 so we're only showing the
+// definitively-transmission lines (above 138 kV = true transmission;
+// lower kV values in this dataset are often distribution). If Tyler wants
+// to see the full dataset later we can drop the where filter or add a
+// second checkbox for sub-138 kV.
+//
+// Service: https://hifld-geoplatform.opendata.arcgis.com
+// The dataset uses -999999 as a sentinel for "voltage not available", so
+// the >= 138 filter naturally excludes those as well.
+const transmissionLines = L.esri.featureLayer({
+  url: 'https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services/Electric_Power_Transmission_Lines/FeatureServer/0',
+  where: 'VOLTAGE >= 138',
+  minZoom: 10,
+  style: function () {
+    return { color: '#ff7a1a', weight: 3, opacity: 0.9 };
+  }
+});
+transmissionLines.bindPopup(function (layer) {
+  const a = layer.feature.properties || {};
+  const v = a.VOLTAGE != null && a.VOLTAGE >= 0 ? a.VOLTAGE + ' kV' : 'unknown';
+  const owner = a.OWNER || '—';
+  const type = a.TYPE || '—';
+  return `<strong>Transmission line</strong><br>Voltage: ${v}<br>Owner: ${owner}<br>Type: ${type}`;
+});
+
 // ── Add default layers to map on load ────────────────────────────────────────
 flood.addTo(map);
 wetlands.addTo(map);
 topoOverlay.addTo(map);
+transmissionLines.addTo(map);
 
 // ── Marker & parcel ───────────────────────────────────────────────────────────
 let marker = null, parcelLayer = null;
@@ -270,6 +301,10 @@ document.getElementById('ov-wetlands').addEventListener('change', function () {
 document.getElementById('ov-soils').addEventListener('change', function () {
   this.checked ? soils.addTo(map) : map.removeLayer(soils);
   setStatus(this.checked ? 'NRCS soils on' : 'NRCS soils off');
+});
+document.getElementById('ov-transmission').addEventListener('change', function () {
+  this.checked ? transmissionLines.addTo(map) : map.removeLayer(transmissionLines);
+  setStatus(this.checked ? 'Transmission lines on (138 kV+)' : 'Transmission lines off');
 });
 
 function setStatus(m) { document.getElementById('status-txt').textContent = m; }
@@ -722,7 +757,7 @@ window.__parcelReadyStatus = {
   // Also attach to the bare declarations so layers not currently on the map
   // (soils, alternate basemaps) get tracked if they're added mid-load.
   try {
-    [sat, imgTopo, topo, osm, topoOverlay, flood, wetlands, soils, parcels].forEach(attachToLayer);
+    [sat, imgTopo, topo, osm, topoOverlay, flood, wetlands, soils, transmissionLines, parcels].forEach(attachToLayer);
   } catch (e) {
     note('layer reference sweep error: ' + e.message);
   }
